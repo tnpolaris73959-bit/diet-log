@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1A1A2E">
+<!-- ────────────────────────────────────────────
+  [セキュリティ修正④] CSP（Content Security Policy）を追加
+
+  なぜ？：このアプリが「どこと通信してよいか」のルールを決めるもの。
+    たとえば、もし誰かがこのHTMLを改ざんして怪しいサイトにデータを
+    送るコードを仕込んでも、CSPが「そこは許可されていない」とブロックする。
+    いわば「この薬以外は飲んではダメ」という処方箋のようなもの。
+
+  具体的に許可している通信先：
+    - 'self' → このアプリ自身のファイル（HTML, JS, CSSなど）
+    - data: blob: → スマホで撮った写真のプレビュー表示用
+    - script.google.com → GAS（サーバー側）との通信
+    - script.googleusercontent.com → GASリダイレクト先
+  これ以外のサイトへの通信はすべてブロックされる。
+──────────────────────────────────────────── -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self';
+  img-src 'self' data: blob:;
+  connect-src https://script.google.com https://script.googleusercontent.com;
+  style-src 'self' 'unsafe-inline';
+  script-src 'self' 'unsafe-inline';">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>食事ログ</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  background: #F7F8FA; min-height: 100vh; min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+.app { max-width: 480px; margin: 0 auto; padding: 1rem; }
+
+/* ===== ログイン画面 ===== */
+.login-screen { max-width: 340px; margin: 0 auto; padding: 4rem 1.5rem; text-align: center; }
+.login-icon { font-size: 48px; margin-bottom: 12px; }
+.login-title { font-size: 22px; font-weight: 700; color: #1A1A2E; margin-bottom: 6px; }
+.login-sub { font-size: 13px; color: #888; margin-bottom: 2rem; }
+.login-input {
+  width: 100%; font-size: 16px; padding: 12px 16px;
+  border: 2px solid #DDE1E9; border-radius: 12px;
+  background: white; color: #1A1A2E; outline: none;
+  text-align: center; letter-spacing: 2px; font-family: inherit;
+}
+.login-input:focus { border-color: #27AE60; }
+.login-input.err { border-color: #C0392B; }
+.login-btn {
+  width: 100%; padding: 14px; border: none; border-radius: 24px;
+  font-size: 15px; font-weight: 700; cursor: pointer;
+  background: linear-gradient(135deg, #27AE60, #2ECC71); color: white;
+  margin-top: 14px;
+}
+.login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.login-msg { font-size: 13px; color: #C0392B; margin-top: 10px; min-height: 18px; }
+.login-note { font-size: 11px; color: #aaa; margin-top: 1.5rem; line-height: 1.6; }
+
+/* ===== メイン画面 ===== */
+.header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 1rem; padding-top: 0.25rem;
+}
+.header h1 { font-size: 18px; font-weight: 700; color: #1A1A2E; }
+.header-right { margin-left: auto; font-size: 12px; color: #888; }
+
+/* ===== ステップ表示 ===== */
+.steps { display: flex; gap: 4px; margin-bottom: 1.25rem; }
+.step-dot {
+  flex: 1; height: 4px; border-radius: 2px; background: #DDE1E9;
+  transition: background 0.3s;
+}
+.step-dot.active { background: #27AE60; }
+.step-dot.done { background: #27AE60; }
+
+/* ===== 各ステップ ===== */
+.step { display: none; }
+.step.active { display: block; }
+
+/* ステップ1：カメラ */
+.camera-area {
+  position: relative; width: 100%; aspect-ratio: 3/4;
+  background: #1A1A2E; border-radius: 16px; overflow: hidden;
+  margin-bottom: 1rem;
+}
+.camera-area video {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.camera-area canvas { display: none; }
+.camera-area img {
+  width: 100%; height: 100%; object-fit: cover;
+  display: none;
+}
+.capture-btn {
+  display: block; margin: 0 auto; width: 72px; height: 72px;
+  border-radius: 50%; border: 4px solid #27AE60;
+  background: white; cursor: pointer; position: relative;
+}
+.capture-btn::after {
+  content: ''; position: absolute; inset: 6px;
+  border-radius: 50%; background: #27AE60;
+}
+.capture-btn:active::after { background: #1E8449; }
+
+/* ファイル選択（フォールバック） */
+.file-fallback {
+  display: none; text-align: center; padding: 2rem 1rem;
+  background: white; border-radius: 16px; border: 2px dashed #DDE1E9;
+  margin-bottom: 1rem;
+}
+.file-fallback.show { display: block; }
+.file-label {
+  display: inline-block; padding: 14px 32px; border-radius: 24px;
+  background: linear-gradient(135deg, #27AE60, #2ECC71); color: white;
+  font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.file-input { display: none; }
+.file-preview {
+  width: 100%; max-height: 300px; object-fit: contain;
+  border-radius: 12px; margin-top: 1rem; display: none;
+}
+
+/* 再撮影ボタン */
+.retake-btn {
+  display: none; width: 100%; padding: 12px; border: 1.5px solid #DDE1E9;
+  border-radius: 24px; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: white; color: #666; margin-bottom: 0.75rem;
+}
+
+/* ステップ2：ユーザー選択 */
+.user-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1rem; }
+.user-btn {
+  padding: 24px 16px; border: 3px solid #DDE1E9; border-radius: 16px;
+  background: white; cursor: pointer; text-align: center;
+  transition: all 0.15s; font-family: inherit;
+}
+.user-btn .emoji { font-size: 36px; margin-bottom: 6px; }
+.user-btn .label { font-size: 16px; font-weight: 700; color: #1A1A2E; }
+.user-btn.selected { border-color: #27AE60; background: #E8F8F0; }
+.user-btn:active { transform: scale(0.97); }
+
+/* タイミング選択 */
+.timing-label { font-size: 13px; color: #888; margin-bottom: 8px; }
+.timing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 1rem; }
+.timing-btn {
+  padding: 10px 4px; border: 2px solid #DDE1E9; border-radius: 12px;
+  background: white; cursor: pointer; text-align: center;
+  font-size: 13px; font-weight: 600; color: #666;
+  transition: all 0.15s; font-family: inherit;
+}
+.timing-btn.selected { border-color: #27AE60; background: #E8F8F0; color: #1A1A2E; }
+
+/* メモ */
+.memo-input {
+  width: 100%; font-size: 14px; padding: 10px 14px;
+  border: 1.5px solid #DDE1E9; border-radius: 12px;
+  background: white; color: #1A1A2E; outline: none;
+  font-family: inherit; resize: none; height: 48px;
+}
+.memo-input:focus { border-color: #27AE60; }
+.memo-label { font-size: 13px; color: #888; margin-bottom: 6px; }
+
+/* 送信ボタン */
+.submit-btn {
+  width: 100%; padding: 16px; border: none; border-radius: 24px;
+  font-size: 16px; font-weight: 700; cursor: pointer;
+  background: linear-gradient(135deg, #27AE60, #2ECC71); color: white;
+  margin-top: 1rem; transition: opacity 0.2s;
+}
+.submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.submit-btn:active:not(:disabled) { opacity: 0.8; }
+
+/* ステップ3：完了 */
+.done-screen { text-align: center; padding: 3rem 1rem; }
+.done-icon { font-size: 64px; margin-bottom: 12px; }
+.done-title { font-size: 20px; font-weight: 700; color: #1A1A2E; margin-bottom: 8px; }
+.done-detail { font-size: 14px; color: #888; line-height: 1.8; margin-bottom: 2rem; }
+.done-btn {
+  width: 100%; padding: 14px; border: none; border-radius: 24px;
+  font-size: 15px; font-weight: 700; cursor: pointer;
+  background: linear-gradient(135deg, #27AE60, #2ECC71); color: white;
+}
+
+/* ===== メッセージ ===== */
+.msg { font-size: 13px; margin-top: 8px; min-height: 18px; text-align: center; }
+.msg.err { color: #C0392B; }
+.msg.ok { color: #27AE60; }
+
+/* ===== ローディング ===== */
+.uploading-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(255,255,255,0.92); z-index: 100;
+  justify-content: center; align-items: center;
+  flex-direction: column; gap: 16px;
+}
+.uploading-overlay.show { display: flex; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 4px solid #DDE1E9; border-top-color: #27AE60;
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.uploading-text { font-size: 15px; color: #666; font-weight: 600; }
+
+/* ===== サムネイルプレビュー ===== */
+.preview-thumb {
+  width: 100%; max-height: 200px; object-fit: cover;
+  border-radius: 12px; margin-bottom: 1rem;
+}
+</style>
+</head>
+<body>
+
+<!-- ログイン画面 -->
+<div id="login-screen" class="login-screen">
+  <div class="login-icon">🍽</div>
+  <div class="login-title">食事ログ</div>
+  <div class="login-sub">合言葉を入力してはじめる</div>
+  <input type="password" class="login-input" id="login-token" placeholder="合言葉を入力" autocomplete="off">
+  <button class="login-btn" id="login-btn" onclick="doLogin()">はじめる</button>
+  <div class="login-msg" id="login-msg"></div>
+  <div class="login-note">合言葉はこの画面を閉じると消えます。<br>ソースコードには保存されていません。</div>
+</div>
+
+<!-- メインアプリ -->
+<div class="app" id="main-app" style="display:none;">
+  <div class="header">
+    <h1>🍽 食事ログ</h1>
+    <span class="header-right" id="today-date"></span>
+  </div>
+
+  <!-- ステップインジケーター -->
+  <div class="steps">
+    <div class="step-dot active" id="dot-1"></div>
+    <div class="step-dot" id="dot-2"></div>
+    <div class="step-dot" id="dot-3"></div>
+  </div>
+
+  <!-- STEP 1: 写真撮影 -->
+  <div class="step active" id="step-1">
+    <!-- カメラ（リアルタイムプレビュー） -->
+    <div class="camera-area" id="camera-area">
+      <video id="camera-video" autoplay playsinline muted></video>
+      <canvas id="camera-canvas"></canvas>
+      <img id="camera-preview" alt="プレビュー">
+    </div>
+    <button class="capture-btn" id="capture-btn" onclick="capturePhoto()"></button>
+    <button class="retake-btn" id="retake-btn" onclick="retakePhoto()">📷 撮り直す</button>
+
+    <!-- ファイル選択（カメラが使えない場合のフォールバック） -->
+    <div class="file-fallback" id="file-fallback">
+      <p style="font-size:13px;color:#888;margin-bottom:12px;">カメラが使えない環境です</p>
+      <label class="file-label">
+        📷 写真を選択
+        <input type="file" accept="image/*" capture="environment" class="file-input" id="file-input" onchange="onFileSelected(event)">
+      </label>
+      <img class="file-preview" id="file-preview" alt="プレビュー">
+    </div>
+
+    <button class="submit-btn" id="next-to-step2" onclick="goToStep(2)" style="display:none;">次へ →</button>
+  </div>
+
+  <!-- STEP 2: ユーザー＆詳細 -->
+  <div class="step" id="step-2">
+    <img class="preview-thumb" id="thumb-preview" alt="撮影した写真">
+
+    <div class="timing-label">誰の食事？</div>
+    <div class="user-grid">
+      <button class="user-btn" onclick="selectUser(this, '夫')">
+        <div class="emoji">🧑</div>
+        <div class="label">夫</div>
+      </button>
+      <button class="user-btn" onclick="selectUser(this, '私')">
+        <div class="emoji">👩</div>
+        <div class="label">私</div>
+      </button>
+    </div>
+
+    <div class="timing-label">タイミング（任意）</div>
+    <div class="timing-grid">
+      <button class="timing-btn" onclick="selectTiming(this, '朝')">🌅 朝</button>
+      <button class="timing-btn" onclick="selectTiming(this, '昼')">☀️ 昼</button>
+      <button class="timing-btn" onclick="selectTiming(this, '夕')">🌙 夕</button>
+      <button class="timing-btn" onclick="selectTiming(this, '間食')">🍪 間食</button>
+    </div>
+
+    <div class="memo-label">メモ（任意）</div>
+    <textarea class="memo-input" id="memo-input" placeholder="例：プロテインドリンク、外食"></textarea>
+
+    <button class="submit-btn" id="submit-btn" onclick="submitRecord()" disabled>記録する</button>
+    <button class="retake-btn" style="display:block;margin-top:8px;" onclick="goToStep(1)">← 写真に戻る</button>
+    <div class="msg" id="submit-msg"></div>
+  </div>
+
+  <!-- STEP 3: 完了 -->
+  <div class="step" id="step-3">
+    <div class="done-screen">
+      <div class="done-icon">✅</div>
+      <div class="done-title">記録しました！</div>
+      <div class="done-detail" id="done-detail"></div>
+      <button class="done-btn" onclick="resetAll()">もう1食記録する</button>
+    </div>
+  </div>
+</div>
+
+<!-- アップロード中のオーバーレイ -->
+<div class="uploading-overlay" id="uploading">
+  <div class="spinner"></div>
+  <div class="uploading-text">アップロード中...</div>
+</div>
+
+<script>
+// ============================================
+// 設定 — トークンはログイン画面で入力する（ハードコーディングしない）
+// ============================================
+var CONFIG = {
+  GAS_URL: 'https://script.google.com/macros/s/AKfycbxV18TOD6S-sLQ0STVQGSjhTCn0gXwUWKT1V7b4pQlatfdEPNzV0z89lx9jSZdf7H0OaA/exec',
+  TOKEN: ''
+};
+
+var currentStep = 1;
+var capturedImageData = null; // base64（data URI prefix なし）
+var selectedUser = '';
+var selectedTiming = '';
+var cameraStream = null;
+
+// --- ログイン ---
+function doLogin() {
+  var tokenInput = document.getElementById('login-token');
+  var msgEl = document.getElementById('login-msg');
+  var btn = document.getElementById('login-btn');
+  var token = tokenInput.value.trim();
+
+  if (!token) {
+    msgEl.textContent = '合言葉を入力してください';
+    tokenInput.classList.add('err');
+    return;
+  }
+
+  tokenInput.classList.remove('err');
+  msgEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = '確認中...';
+
+  CONFIG.TOKEN = token;
+
+  // ────────────────────────────────────────────
+  // [セキュリティ修正③] ログイン確認をPOSTで送る
+  //
+  // 修正前：GETリクエスト（URLに ?token=合言葉 がつく）
+  //   → ブラウザの閲覧履歴に合言葉が残ってしまう
+  //   → たとえば共有PCやスマホを誰かに見られた時に合言葉がバレる
+  //
+  // 修正後：POSTリクエスト（合言葉はリクエスト本文に入る）
+  //   → URLには何も表示されないので、履歴にも残らない
+  //
+  // 例えるなら：
+  //   修正前 = ハガキに合言葉を書いて送る（配達途中で見える）
+  //   修正後 = 封筒に入れて送る（中身は見えない）
+  // ────────────────────────────────────────────
+  fetch(CONFIG.GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ token: token, action: 'ping' })
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        CONFIG.TOKEN = '';
+        msgEl.textContent = '合言葉が違います';
+        tokenInput.classList.add('err');
+        btn.disabled = false;
+        btn.textContent = 'はじめる';
+        return;
+      }
+      // 認証成功
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('main-app').style.display = 'block';
+      setTodayDate();
+      initCamera();
+    })
+    .catch(function() {
+      CONFIG.TOKEN = '';
+      msgEl.textContent = '通信エラーです。ネットワークを確認してください';
+      btn.disabled = false;
+      btn.textContent = 'はじめる';
+    });
+}
+
+document.getElementById('login-token').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
+
+// --- 日付表示 ---
+function setTodayDate() {
+  var d = new Date();
+  var m = d.getMonth() + 1;
+  var day = d.getDate();
+  var weekdays = ['日','月','火','水','木','金','土'];
+  var w = weekdays[d.getDay()];
+  document.getElementById('today-date').textContent = m + '/' + day + '（' + w + '）';
+}
+
+// --- カメラ初期化 ---
+function initCamera() {
+  var video = document.getElementById('camera-video');
+  var fallback = document.getElementById('file-fallback');
+  var cameraArea = document.getElementById('camera-area');
+  var captureBtn = document.getElementById('capture-btn');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // カメラAPI非対応 → ファイル選択にフォールバック
+    cameraArea.style.display = 'none';
+    captureBtn.style.display = 'none';
+    fallback.classList.add('show');
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 1920 } },
+    audio: false
+  })
+  .then(function(stream) {
+    cameraStream = stream;
+    video.srcObject = stream;
+  })
+  .catch(function() {
+    // カメラ許可なし → ファイル選択にフォールバック
+    cameraArea.style.display = 'none';
+    captureBtn.style.display = 'none';
+    fallback.classList.add('show');
+  });
+}
+
+// --- 写真撮影 ---
+function capturePhoto() {
+  var video = document.getElementById('camera-video');
+  var canvas = document.getElementById('camera-canvas');
+  var preview = document.getElementById('camera-preview');
+  var captureBtn = document.getElementById('capture-btn');
+  var retakeBtn = document.getElementById('retake-btn');
+  var nextBtn = document.getElementById('next-to-step2');
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  var ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  // JPEG品質 0.85 でサイズと画質のバランスをとる
+  var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  capturedImageData = dataUrl.split(',')[1]; // base64部分のみ
+
+  preview.src = dataUrl;
+  preview.style.display = 'block';
+  video.style.display = 'none';
+  captureBtn.style.display = 'none';
+  retakeBtn.style.display = 'block';
+  nextBtn.style.display = 'block';
+
+  // カメラストリーム停止（バッテリー節約）
+  stopCamera();
+}
+
+// --- 撮り直し ---
+function retakePhoto() {
+  var video = document.getElementById('camera-video');
+  var preview = document.getElementById('camera-preview');
+  var captureBtn = document.getElementById('capture-btn');
+  var retakeBtn = document.getElementById('retake-btn');
+  var nextBtn = document.getElementById('next-to-step2');
+
+  capturedImageData = null;
+  preview.style.display = 'none';
+  preview.src = '';
+  video.style.display = 'block';
+  captureBtn.style.display = 'block';
+  retakeBtn.style.display = 'none';
+  nextBtn.style.display = 'none';
+
+  // カメラ再起動
+  initCamera();
+}
+
+// --- カメラ停止 ---
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(function(t) { t.stop(); });
+    cameraStream = null;
+  }
+}
+
+// --- ファイル選択（フォールバック） ---
+function onFileSelected(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+
+  // ────────────────────────────────────────────
+  // [セキュリティ修正②-a] スマホ側で画像のサイズと種類をチェック
+  //
+  // なぜ？：このアプリは「スマホで食事の写真を撮って送る」ための
+  //   ものなので、写真以外のファイルや極端に大きいファイルは
+  //   受け付けないようにする。
+  //   スマホの食事写真は通常1〜5MB程度。10MBもあれば十分。
+  //   これがないと、間違って動画や巨大ファイルを選んだときに
+  //   アップロードが延々と終わらなかったり、エラーになったりする。
+  //
+  // ※ サーバー側（GAS）にも同じチェックがあるので二重で安全
+  //   （スマホ側 = 「間違えたらすぐ教えてくれる」
+  //     サーバー側 = 「万が一すり抜けても最後に止める」）
+  // ────────────────────────────────────────────
+  if (file.size > 10 * 1024 * 1024) {
+    alert('10MB以下の画像を選択してください');
+    event.target.value = '';
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    alert('画像ファイルのみ対応しています');
+    event.target.value = '';
+    return;
+  }
+
+  var nextBtn = document.getElementById('next-to-step2');
+  var previewImg = document.getElementById('file-preview');
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var dataUrl = e.target.result;
+
+    // リサイズ処理（大きすぎる画像の対策）
+    var img = new Image();
+    img.onload = function() {
+      var canvas = document.createElement('canvas');
+      var maxW = 1280;
+      var maxH = 1920;
+      var w = img.width;
+      var h = img.height;
+
+      if (w > maxW || h > maxH) {
+        var ratio = Math.min(maxW / w, maxH / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+
+      canvas.width = w;
+      canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+
+      var resizedUrl = canvas.toDataURL('image/jpeg', 0.85);
+      capturedImageData = resizedUrl.split(',')[1];
+
+      previewImg.src = resizedUrl;
+      previewImg.style.display = 'block';
+      nextBtn.style.display = 'block';
+    };
+    img.src = dataUrl;
+  };
+  reader.readAsDataURL(file);
+}
+
+// --- ステップ遷移 ---
+function goToStep(n) {
+  if (n === 2 && !capturedImageData) return;
+
+  currentStep = n;
+  document.querySelectorAll('.step').forEach(function(s) { s.classList.remove('active'); });
+  document.getElementById('step-' + n).classList.add('active');
+
+  // ステップドット更新
+  for (var i = 1; i <= 3; i++) {
+    var dot = document.getElementById('dot-' + i);
+    dot.classList.remove('active', 'done');
+    if (i < n) dot.classList.add('done');
+    if (i === n) dot.classList.add('active');
+  }
+
+  // STEP2に進む時：サムネイル表示
+  if (n === 2) {
+    document.getElementById('thumb-preview').src = 'data:image/jpeg;base64,' + capturedImageData;
+  }
+
+  window.scrollTo(0, 0);
+}
+
+// --- ユーザー選択 ---
+function selectUser(btn, user) {
+  selectedUser = user;
+  document.querySelectorAll('.user-btn').forEach(function(b) { b.classList.remove('selected'); });
+  btn.classList.add('selected');
+  updateSubmitBtn();
+}
+
+// --- タイミング選択 ---
+function selectTiming(btn, timing) {
+  if (btn.classList.contains('selected')) {
+    btn.classList.remove('selected');
+    selectedTiming = '';
+  } else {
+    document.querySelectorAll('.timing-btn').forEach(function(b) { b.classList.remove('selected'); });
+    btn.classList.add('selected');
+    selectedTiming = timing;
+  }
+}
+
+// --- 送信ボタン有効化 ---
+function updateSubmitBtn() {
+  var btn = document.getElementById('submit-btn');
+  btn.disabled = !selectedUser;
+}
+
+// --- 記録送信 ---
+function submitRecord() {
+  if (!capturedImageData || !selectedUser) return;
+
+  var overlay = document.getElementById('uploading');
+  overlay.classList.add('show');
+  document.getElementById('submit-btn').disabled = true;
+
+  var body = {
+    token: CONFIG.TOKEN,
+    action: 'upload',
+    imageData: capturedImageData,
+    user: selectedUser,
+    timing: selectedTiming,
+    memo: document.getElementById('memo-input').value.trim()
+  };
+
+  fetch(CONFIG.GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(body)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    overlay.classList.remove('show');
+    if (data.error) {
+      document.getElementById('submit-msg').textContent = 'エラー: ' + data.error;
+      document.getElementById('submit-msg').classList.add('err');
+      document.getElementById('submit-btn').disabled = false;
+      return;
+    }
+
+    // 完了画面へ
+    var timingText = selectedTiming || '';
+    var detail = selectedUser + (timingText ? ' / ' + timingText : '') + ' の食事を記録しました';
+    var memoText = document.getElementById('memo-input').value.trim();
+    if (memoText) detail += '\nメモ: ' + memoText;
+    document.getElementById('done-detail').textContent = detail;
+    goToStep(3);
+  })
+  .catch(function() {
+    overlay.classList.remove('show');
+    document.getElementById('submit-msg').textContent = '通信エラーです。もう一度お試しください';
+    document.getElementById('submit-msg').classList.add('err');
+    document.getElementById('submit-btn').disabled = false;
+  });
+}
+
+// --- リセット（もう1食記録する） ---
+function resetAll() {
+  capturedImageData = null;
+  selectedUser = '';
+  selectedTiming = '';
+
+  // UI リセット
+  document.querySelectorAll('.user-btn').forEach(function(b) { b.classList.remove('selected'); });
+  document.querySelectorAll('.timing-btn').forEach(function(b) { b.classList.remove('selected'); });
+  document.getElementById('memo-input').value = '';
+  document.getElementById('submit-msg').textContent = '';
+  document.getElementById('submit-msg').classList.remove('err');
+  document.getElementById('submit-btn').disabled = true;
+
+  // カメラUI リセット
+  var video = document.getElementById('camera-video');
+  var preview = document.getElementById('camera-preview');
+  var captureBtn = document.getElementById('capture-btn');
+  var retakeBtn = document.getElementById('retake-btn');
+  var nextBtn = document.getElementById('next-to-step2');
+  var filePreview = document.getElementById('file-preview');
+  var fileInput = document.getElementById('file-input');
+
+  preview.style.display = 'none';
+  preview.src = '';
+  video.style.display = 'block';
+  captureBtn.style.display = 'block';
+  retakeBtn.style.display = 'none';
+  nextBtn.style.display = 'none';
+  filePreview.style.display = 'none';
+  fileInput.value = '';
+
+  goToStep(1);
+  initCamera();
+}
+
+// --- XSSエスケープ ---
+// 現在は使われていないが、v2で履歴表示などを追加する場合に備えて残しておく。
+// textContentでテキストを挿入している限りXSSの心配はない。
+// innerHTMLを使う場面が出てきたら、この関数で値をエスケープすること。
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// --- Service Worker 登録 ---
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(function() {});
+}
+</script>
+</body>
+</html>
