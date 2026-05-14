@@ -133,6 +133,35 @@ body {
   background: white; color: #666; margin-bottom: 0.75rem;
 }
 
+/* 複数写真サムネイル一覧 */
+.photo-thumbnails {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 1rem;
+}
+.photo-thumb-item {
+  position: relative; width: 72px; height: 72px; border-radius: 10px; overflow: hidden;
+  border: 2px solid #DDE1E9;
+}
+.photo-thumb-item img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.photo-thumb-remove {
+  position: absolute; top: 2px; right: 2px; width: 22px; height: 22px;
+  border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: white;
+  font-size: 13px; line-height: 22px; text-align: center; cursor: pointer; padding: 0;
+}
+.add-photo-btn {
+  width: 100%; padding: 12px; border: 1.5px dashed #27AE60;
+  border-radius: 24px; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: #E8F8F0; color: #27AE60; margin-bottom: 0.75rem;
+}
+
+/* 戻るボタン（共通） */
+.back-btn {
+  width: 100%; padding: 12px; border: 1.5px solid #DDE1E9;
+  border-radius: 24px; font-size: 14px; font-weight: 600; cursor: pointer;
+  background: white; color: #666; margin-top: 8px;
+}
+
 /* ステップ2：ユーザー選択 */
 .user-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1rem; }
 .user-btn {
@@ -161,7 +190,7 @@ body {
   width: 100%; font-size: 14px; padding: 10px 14px;
   border: 1.5px solid #DDE1E9; border-radius: 12px;
   background: white; color: #1A1A2E; outline: none;
-  font-family: inherit; resize: none; height: 48px;
+  font-family: inherit; resize: none; height: 80px;
 }
 .memo-input:focus { border-color: #27AE60; }
 .memo-label { font-size: 13px; color: #888; margin-bottom: 6px; }
@@ -208,11 +237,7 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 .uploading-text { font-size: 15px; color: #666; font-weight: 600; }
 
-/* ===== サムネイルプレビュー ===== */
-.preview-thumb {
-  width: 100%; max-height: 200px; object-fit: cover;
-  border-radius: 12px; margin-bottom: 1rem;
-}
+/* (preview-thumb removed - using photo-thumbnails instead) */
 </style>
 </head>
 <body>
@@ -244,6 +269,9 @@ body {
 
   <!-- STEP 1: 写真撮影 -->
   <div class="step active" id="step-1">
+    <!-- 撮影済み写真サムネイル一覧 -->
+    <div class="photo-thumbnails" id="photo-thumbnails"></div>
+
     <!-- カメラ（リアルタイムプレビュー） -->
     <div class="camera-area" id="camera-area">
       <video id="camera-video" autoplay playsinline muted></video>
@@ -251,7 +279,7 @@ body {
       <img id="camera-preview" alt="プレビュー">
     </div>
     <button class="capture-btn" id="capture-btn" onclick="capturePhoto()"></button>
-    <button class="retake-btn" id="retake-btn" onclick="retakePhoto()">📷 撮り直す</button>
+    <button class="retake-btn" id="retake-btn" onclick="addAndContinue()">＋ もう1枚追加</button>
 
     <!-- ファイル選択（カメラが使えない場合のフォールバック） -->
     <div class="file-fallback" id="file-fallback">
@@ -261,24 +289,25 @@ body {
         <input type="file" accept="image/*" capture="environment" class="file-input" id="file-input" onchange="onFileSelected(event)">
       </label>
       <img class="file-preview" id="file-preview" alt="プレビュー">
+      <button class="add-photo-btn" id="file-add-more" onclick="addMoreFromFile()" style="display:none;">＋ もう1枚追加</button>
     </div>
 
-    <button class="submit-btn" id="next-to-step2" onclick="goToStep(2)" style="display:none;">次へ →</button>
+    <button class="submit-btn" id="next-to-step2" onclick="goToStep(2)">次へ →</button>
   </div>
 
   <!-- STEP 2: ユーザー＆詳細 -->
   <div class="step" id="step-2">
-    <img class="preview-thumb" id="thumb-preview" alt="撮影した写真">
+    <div class="photo-thumbnails" id="step2-thumbnails" style="margin-bottom:1rem;"></div>
 
     <div class="timing-label">誰の食事？</div>
     <div class="user-grid">
-      <button class="user-btn" onclick="selectUser(this, '夫')">
+      <button class="user-btn" onclick="selectUser(this, 'よしっく')">
         <div class="emoji">🧑</div>
-        <div class="label">夫</div>
+        <div class="label">よしっく</div>
       </button>
-      <button class="user-btn" onclick="selectUser(this, '私')">
+      <button class="user-btn" onclick="selectUser(this, 'なみっく')">
         <div class="emoji">👩</div>
-        <div class="label">私</div>
+        <div class="label">なみっく</div>
       </button>
     </div>
 
@@ -294,7 +323,7 @@ body {
     <textarea class="memo-input" id="memo-input" placeholder="例：プロテインドリンク、外食"></textarea>
 
     <button class="submit-btn" id="submit-btn" onclick="submitRecord()" disabled>記録する</button>
-    <button class="retake-btn" style="display:block;margin-top:8px;" onclick="goToStep(1)">← 写真に戻る</button>
+    <button class="back-btn" onclick="goToStep(1)">← 戻る</button>
     <div class="msg" id="submit-msg"></div>
   </div>
 
@@ -325,7 +354,8 @@ var CONFIG = {
 };
 
 var currentStep = 1;
-var capturedImageData = null; // base64（data URI prefix なし）
+var capturedImages = []; // 複数枚対応: base64文字列の配列
+var pendingImageData = null; // 撮影直後の一時保持用
 var selectedUser = '';
 var selectedTiming = '';
 var cameraStream = null;
@@ -445,7 +475,6 @@ function capturePhoto() {
   var preview = document.getElementById('camera-preview');
   var captureBtn = document.getElementById('capture-btn');
   var retakeBtn = document.getElementById('retake-btn');
-  var nextBtn = document.getElementById('next-to-step2');
 
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
@@ -454,37 +483,81 @@ function capturePhoto() {
 
   // JPEG品質 0.85 でサイズと画質のバランスをとる
   var dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-  capturedImageData = dataUrl.split(',')[1]; // base64部分のみ
+  pendingImageData = dataUrl.split(',')[1]; // base64部分のみ
 
   preview.src = dataUrl;
   preview.style.display = 'block';
   video.style.display = 'none';
   captureBtn.style.display = 'none';
   retakeBtn.style.display = 'block';
-  nextBtn.style.display = 'block';
 
   // カメラストリーム停止（バッテリー節約）
   stopCamera();
 }
 
-// --- 撮り直し ---
-function retakePhoto() {
+// --- もう1枚追加（カメラ撮影後） ---
+function addAndContinue() {
+  if (pendingImageData) {
+    capturedImages.push(pendingImageData);
+    pendingImageData = null;
+  }
+  renderThumbnails();
+  // カメラを再起動して次の撮影に備える
   var video = document.getElementById('camera-video');
   var preview = document.getElementById('camera-preview');
   var captureBtn = document.getElementById('capture-btn');
   var retakeBtn = document.getElementById('retake-btn');
-  var nextBtn = document.getElementById('next-to-step2');
 
-  capturedImageData = null;
   preview.style.display = 'none';
   preview.src = '';
   video.style.display = 'block';
   captureBtn.style.display = 'block';
   retakeBtn.style.display = 'none';
-  nextBtn.style.display = 'none';
-
-  // カメラ再起動
   initCamera();
+}
+
+// --- ファイル選択でもう1枚追加 ---
+function addMoreFromFile() {
+  if (pendingImageData) {
+    capturedImages.push(pendingImageData);
+    pendingImageData = null;
+  }
+  renderThumbnails();
+  // ファイル入力をリセットして再選択可能に
+  var fileInput = document.getElementById('file-input');
+  var filePreview = document.getElementById('file-preview');
+  var addMoreBtn = document.getElementById('file-add-more');
+  fileInput.value = '';
+  filePreview.style.display = 'none';
+  addMoreBtn.style.display = 'none';
+}
+
+// --- サムネイル一覧の描画 ---
+function renderThumbnails() {
+  var container = document.getElementById('photo-thumbnails');
+  container.innerHTML = '';
+  capturedImages.forEach(function(imgData, idx) {
+    var item = document.createElement('div');
+    item.className = 'photo-thumb-item';
+    var img = document.createElement('img');
+    img.src = 'data:image/jpeg;base64,' + imgData;
+    img.alt = '写真 ' + (idx + 1);
+    var removeBtn = document.createElement('button');
+    removeBtn.className = 'photo-thumb-remove';
+    removeBtn.textContent = '×';
+    removeBtn.onclick = (function(i) {
+      return function() { removePhoto(i); };
+    })(idx);
+    item.appendChild(img);
+    item.appendChild(removeBtn);
+    container.appendChild(item);
+  });
+}
+
+// --- 写真の個別削除 ---
+function removePhoto(idx) {
+  capturedImages.splice(idx, 1);
+  renderThumbnails();
 }
 
 // --- カメラ停止 ---
@@ -525,8 +598,8 @@ function onFileSelected(event) {
     return;
   }
 
-  var nextBtn = document.getElementById('next-to-step2');
   var previewImg = document.getElementById('file-preview');
+  var addMoreBtn = document.getElementById('file-add-more');
 
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -553,11 +626,11 @@ function onFileSelected(event) {
       ctx.drawImage(img, 0, 0, w, h);
 
       var resizedUrl = canvas.toDataURL('image/jpeg', 0.85);
-      capturedImageData = resizedUrl.split(',')[1];
+      pendingImageData = resizedUrl.split(',')[1];
 
       previewImg.src = resizedUrl;
       previewImg.style.display = 'block';
-      nextBtn.style.display = 'block';
+      addMoreBtn.style.display = 'block';
     };
     img.src = dataUrl;
   };
@@ -566,7 +639,28 @@ function onFileSelected(event) {
 
 // --- ステップ遷移 ---
 function goToStep(n) {
-  if (n === 2 && !capturedImageData) return;
+  // STEP1→STEP2: 撮影中の写真があれば確定してから進む
+  if (n === 2 && pendingImageData) {
+    capturedImages.push(pendingImageData);
+    pendingImageData = null;
+    renderThumbnails();
+  }
+
+  // STEP2→STEP1に戻る時: カメラ再起動
+  if (n === 1) {
+    initCamera();
+    // カメラUIをリセット
+    var video = document.getElementById('camera-video');
+    var preview = document.getElementById('camera-preview');
+    var captureBtn = document.getElementById('capture-btn');
+    var retakeBtn = document.getElementById('retake-btn');
+    preview.style.display = 'none';
+    preview.src = '';
+    video.style.display = 'block';
+    captureBtn.style.display = 'block';
+    retakeBtn.style.display = 'none';
+    pendingImageData = null;
+  }
 
   currentStep = n;
   document.querySelectorAll('.step').forEach(function(s) { s.classList.remove('active'); });
@@ -580,9 +674,21 @@ function goToStep(n) {
     if (i === n) dot.classList.add('active');
   }
 
-  // STEP2に進む時：サムネイル表示
+  // STEP2に進む時：サムネイル一覧表示
   if (n === 2) {
-    document.getElementById('thumb-preview').src = 'data:image/jpeg;base64,' + capturedImageData;
+    var step2Thumbs = document.getElementById('step2-thumbnails');
+    step2Thumbs.innerHTML = '';
+    if (capturedImages.length > 0) {
+      capturedImages.forEach(function(imgData, idx) {
+        var item = document.createElement('div');
+        item.className = 'photo-thumb-item';
+        var img = document.createElement('img');
+        img.src = 'data:image/jpeg;base64,' + imgData;
+        img.alt = '写真 ' + (idx + 1);
+        item.appendChild(img);
+        step2Thumbs.appendChild(item);
+      });
+    }
   }
 
   window.scrollTo(0, 0);
@@ -616,55 +722,114 @@ function updateSubmitBtn() {
 
 // --- 記録送信 ---
 function submitRecord() {
-  if (!capturedImageData || !selectedUser) return;
+  if (!selectedUser) return;
 
   var overlay = document.getElementById('uploading');
+  var uploadingText = document.querySelector('.uploading-text');
   overlay.classList.add('show');
   document.getElementById('submit-btn').disabled = true;
 
-  var body = {
-    token: CONFIG.TOKEN,
-    action: 'upload',
-    imageData: capturedImageData,
-    user: selectedUser,
-    timing: selectedTiming,
-    memo: document.getElementById('memo-input').value.trim()
-  };
+  var memo = document.getElementById('memo-input').value.trim();
 
-  fetch(CONFIG.GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(body)
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    overlay.classList.remove('show');
-    if (data.error) {
-      document.getElementById('submit-msg').textContent = 'エラー: ' + data.error;
+  if (capturedImages.length === 0) {
+    // 写真なし：imageDataを空文字で1回だけ送信
+    uploadingText.textContent = '記録中...';
+    var body = {
+      token: CONFIG.TOKEN,
+      action: 'upload',
+      imageData: '',
+      user: selectedUser,
+      timing: selectedTiming,
+      memo: memo
+    };
+    fetch(CONFIG.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      overlay.classList.remove('show');
+      if (data.error) {
+        document.getElementById('submit-msg').textContent = 'エラー: ' + data.error;
+        document.getElementById('submit-msg').classList.add('err');
+        document.getElementById('submit-btn').disabled = false;
+        return;
+      }
+      showDoneScreen(memo);
+    })
+    .catch(function() {
+      overlay.classList.remove('show');
+      document.getElementById('submit-msg').textContent = '通信エラーです。もう一度お試しください';
       document.getElementById('submit-msg').classList.add('err');
       document.getElementById('submit-btn').disabled = false;
-      return;
+    });
+  } else {
+    // 写真あり：1枚ずつ順番に送信
+    var totalImages = capturedImages.length;
+    var currentIndex = 0;
+
+    function sendNextImage() {
+      if (currentIndex >= totalImages) {
+        overlay.classList.remove('show');
+        showDoneScreen(memo);
+        return;
+      }
+
+      uploadingText.textContent = 'アップロード中... (' + (currentIndex + 1) + '/' + totalImages + ')';
+
+      var body = {
+        token: CONFIG.TOKEN,
+        action: 'upload',
+        imageData: capturedImages[currentIndex],
+        user: selectedUser,
+        timing: selectedTiming,
+        memo: currentIndex === 0 ? memo : '' // メモは1枚目のみ
+      };
+
+      fetch(CONFIG.GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(body)
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) {
+          overlay.classList.remove('show');
+          document.getElementById('submit-msg').textContent = 'エラー（' + (currentIndex + 1) + '枚目）: ' + data.error;
+          document.getElementById('submit-msg').classList.add('err');
+          document.getElementById('submit-btn').disabled = false;
+          return;
+        }
+        currentIndex++;
+        sendNextImage();
+      })
+      .catch(function() {
+        overlay.classList.remove('show');
+        document.getElementById('submit-msg').textContent = '通信エラー（' + (currentIndex + 1) + '枚目）。もう一度お試しください';
+        document.getElementById('submit-msg').classList.add('err');
+        document.getElementById('submit-btn').disabled = false;
+      });
     }
 
-    // 完了画面へ
-    var timingText = selectedTiming || '';
-    var detail = selectedUser + (timingText ? ' / ' + timingText : '') + ' の食事を記録しました';
-    var memoText = document.getElementById('memo-input').value.trim();
-    if (memoText) detail += '\nメモ: ' + memoText;
-    document.getElementById('done-detail').textContent = detail;
-    goToStep(3);
-  })
-  .catch(function() {
-    overlay.classList.remove('show');
-    document.getElementById('submit-msg').textContent = '通信エラーです。もう一度お試しください';
-    document.getElementById('submit-msg').classList.add('err');
-    document.getElementById('submit-btn').disabled = false;
-  });
+    sendNextImage();
+  }
+}
+
+// --- 完了画面表示 ---
+function showDoneScreen(memo) {
+  var timingText = selectedTiming || '';
+  var photoText = capturedImages.length > 0 ? '（写真 ' + capturedImages.length + '枚）' : '（テキストのみ）';
+  var detail = selectedUser + (timingText ? ' / ' + timingText : '') + ' の食事を記録しました' + photoText;
+  if (memo) detail += '\nメモ: ' + memo;
+  document.getElementById('done-detail').textContent = detail;
+  goToStep(3);
 }
 
 // --- リセット（もう1食記録する） ---
 function resetAll() {
-  capturedImageData = null;
+  capturedImages = [];
+  pendingImageData = null;
   selectedUser = '';
   selectedTiming = '';
 
@@ -681,18 +846,22 @@ function resetAll() {
   var preview = document.getElementById('camera-preview');
   var captureBtn = document.getElementById('capture-btn');
   var retakeBtn = document.getElementById('retake-btn');
-  var nextBtn = document.getElementById('next-to-step2');
   var filePreview = document.getElementById('file-preview');
   var fileInput = document.getElementById('file-input');
+  var addMoreBtn = document.getElementById('file-add-more');
 
   preview.style.display = 'none';
   preview.src = '';
   video.style.display = 'block';
   captureBtn.style.display = 'block';
   retakeBtn.style.display = 'none';
-  nextBtn.style.display = 'none';
   filePreview.style.display = 'none';
+  if (addMoreBtn) addMoreBtn.style.display = 'none';
   fileInput.value = '';
+
+  // サムネイル一覧クリア
+  document.getElementById('photo-thumbnails').innerHTML = '';
+  document.getElementById('step2-thumbnails').innerHTML = '';
 
   goToStep(1);
   initCamera();
