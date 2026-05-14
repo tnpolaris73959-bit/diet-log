@@ -4,7 +4,7 @@
 // PWAとしてホーム画面に追加するために必要。
 // オフライン対応は v2 以降で検討。
 
-var CACHE_NAME = 'diet-log-v1';
+var CACHE_NAME = 'diet-log-v2';
 
 // インストール時：最低限のファイルをキャッシュ
 self.addEventListener('install', function(event) {
